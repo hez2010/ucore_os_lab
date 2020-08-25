@@ -115,8 +115,8 @@ default_init_memmap(struct Page *base, size_t n) {
     }
     base->property = n;
     SetPageProperty(base);
+    list_add_before(&free_list, &(base->page_link));
     nr_free += n;
-    list_add(&free_list, &(base->page_link));
 }
 
 static struct Page *
@@ -125,26 +125,24 @@ default_alloc_pages(size_t n) {
     if (n > nr_free) {
         return NULL;
     }
-    struct Page *page = NULL;
+
     list_entry_t *le = &free_list;
     while ((le = list_next(le)) != &free_list) {
         struct Page *p = le2page(le, page_link);
         if (p->property >= n) {
-            page = p;
-            break;
+            if (p->property > n) {
+                struct Page *p2 = p + n;
+                p2->property = p->property - n;
+                SetPageProperty(p2);
+                list_add(&(p->page_link), &(p2->page_link));
+            }
+            ClearPageProperty(p);
+            list_del(&(p->page_link));
+            nr_free -= n;
+            return p;
         }
     }
-    if (page != NULL) {
-        list_del(&(page->page_link));
-        if (page->property > n) {
-            struct Page *p = page + n;
-            p->property = page->property - n;
-            list_add(&free_list, &(p->page_link));
-    }
-        nr_free -= n;
-        ClearPageProperty(page);
-    }
-    return page;
+    return NULL;
 }
 
 static void
@@ -161,21 +159,27 @@ default_free_pages(struct Page *base, size_t n) {
     list_entry_t *le = list_next(&free_list);
     while (le != &free_list) {
         p = le2page(le, page_link);
-        le = list_next(le);
         if (base + base->property == p) {
             base->property += p->property;
             ClearPageProperty(p);
             list_del(&(p->page_link));
         }
-        else if (p + p->property == base) {
+        le = list_next(le);
+    }
+    
+    le = list_prev(&free_list);
+    while (le != &free_list) {
+        p = le2page(le, page_link);
+        if (base == p + p->property) {
             p->property += base->property;
             ClearPageProperty(base);
             base = p;
             list_del(&(p->page_link));
         }
+        le = list_prev(le);
     }
     nr_free += n;
-    list_add(&free_list, &(base->page_link));
+    list_add_before(&free_list, &(base->page_link));
 }
 
 static size_t
